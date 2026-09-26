@@ -1,0 +1,77 @@
+name: tests
+
+# The only place the Python in this repo is actually executed.
+#
+# The engine and watchdog tests are pure — no network, no credentials — so this
+# workflow needs no secrets at all. That matters: the test suite can run on a
+# public repo's pull requests without exposing anything.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: km-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Show resolved versions
+        # Printed on purpose: when a future failure is a version issue, this is
+        # the line that says so without anyone having to reproduce it locally.
+        run: |
+          python --version
+          pip list --format=columns
+
+      - name: Run tests
+        run: python -m pytest tests/ -v
+
+  verify-deps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Confirm every pinned version actually exists
+        # A pin that does not resolve is the classic failure that only shows up
+        # at 3am inside a scheduled run. Failing here instead makes it visible
+        # at push time.
+        run: |
+          python -m pip install --dry-run -r requirements.txt -r requirements-dev.txt
+
+  verify-workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint workflow YAML
+        # actionlint catches the mistakes YAML itself accepts: bad expression
+        # syntax, unknown inputs, invalid cron, undeclared job outputs. Without
+        # it these only fail at run time — which for `tick.yml` means inside a
+        # scheduled job nobody is watching.
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color

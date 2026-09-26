@@ -1,0 +1,55 @@
+# supabase/config.toml
+#
+# Present mainly for one reason: every function has to run with
+# `verify_jwt = false`.
+#
+# Why that is not optional. `verify_jwt` only understands the legacy JWT-based
+# keys. The app carries a publishable key (`sb_publishable_...`), which is not a
+# JWT, so the platform's built-in check would try to parse it as one and reject
+# every request with `Invalid JWT` before any of our code runs.
+#
+# Supabase's guidance for publishable and secret keys is to set
+# `verify_jwt = false` and "do the authorization in the function". Read the
+# second half of that against this codebase before acting on it, because here
+# there is no in-function authorization to do, and an earlier version of this
+# comment claimed a `_shared/auth.ts` performed one -- a file that never existed.
+#
+# The app cannot be credential-checked. `supabase_flutter`'s `FunctionsClient`
+# does not attach `apikey` or `Authorization` to `functions.invoke`: its
+# `_getAuthHeaders()` is applied to `auth`, `rest`, `storage` and `realtime` and
+# not to `functions`, so a request from the app arrives with no credential of any
+# kind. A check that demanded the publishable key would therefore reject every
+# real request. The reasoning and the pinned source it was read from are in
+# `functions/_shared/db.ts`, which is the authority on this.
+#
+# What actually protects the data is not a header check. Every table has RLS
+# enabled with no anon policies, so nothing in the schema is reachable without
+# the service key; that key lives only in the runner and in these functions,
+# never in the APK. The publishable key is not a capability -- it is embedded in
+# a notebook the user may publish (see `migrations/0002_cancel_channel.sql`) and
+# reaches exactly one security-definer function, `km_cancel_poll`, for one job
+# id at a time.
+#
+# `project_id` is the local project name. The linked project ref is not stored
+# here; `supabase link` records it separately, so this file stays free of
+# anything project-specific.
+
+project_id = "kaggle-mate"
+
+[functions.accounts]
+verify_jwt = false
+
+[functions.notebooks]
+verify_jwt = false
+
+[functions.schedules]
+verify_jwt = false
+
+[functions.jobs]
+verify_jwt = false
+
+[functions.alerts]
+verify_jwt = false
+
+[functions.status]
+verify_jwt = false

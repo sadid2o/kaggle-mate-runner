@@ -1,0 +1,128 @@
+name: tick
+
+# The heartbeat. Every 5 minutes it asks Supabase which jobs are due, then
+# starts one runner per job as a matrix leg.
+#
+# Why the offset: GitHub's scheduler is busiest at :00 and can drop or delay
+# jobs queued then. `2-59/5` fires at :02, :07, ... :57 — same 5-minute cadence,
+# out of the congestion. Late ticks are also harmless by design: the engine
+# looks back over a 10-minute horizon, so a tick that lands 4 minutes late still
+# creates the job, and a tick that lands 20 minutes late marks it `missed`
+# instead of silently skipping it.
+#
+# This workflow needs exactly two secrets, both Supabase. Per-account Kaggle
+# tokens are NOT here — they live in Supabase Vault and are read one at a time
+# by the worker. That is what makes the account count unlimited: adding an
+# account is a row, never a redeploy.
+
+on:
+  schedule:
+    - cron: '2-59/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Ticks are serialised, and queued rather than dropped. GitHub's scheduler can
+# deliver a tick late; without `queue`, a late tick and its successor can
+# collide and one is cancelled — losing a decision entirely. `queue: max` keeps
+# up to 100 pending runs FIFO instead, and REQUIRES cancel-in-progress: false
+# (set below) or GitHub rejects the workflow.
+concurrency:
+  group: km-tick
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tasks: ${{ steps.decide.outputs.tasks }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Decide which jobs are due
+        id: decide
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: python -m runner.tick
+
+  run:
+    needs: decide
+    # `["none"]` is the sentinel for "nothing to do" — GitHub rejects a matrix
+    # built from an empty array, so the no-work case has to be a real list.
+    if: needs.decide.outputs.tasks != '' && needs.decide.outputs.tasks != '["none"]'
+    runs-on: ubuntu-latest
+    # Under GitHub's 6-hour ceiling on purpose: the worker stops watching at
+    # 5.5h and hands the job to `reap`, so this limit is never the reason a run
+    # is cut short.
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        task: ${{ fromJSON(needs.decide.outputs.tasks) }}
+    # Each leg is its own group, so one job finishing cannot cancel another.
+    concurrency:
+      group: km-worker-${{ matrix.task }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run job
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          # Publishable, not secret: embedded in the notebook so a running run
+          # can hear "Cancel now". Absent means the deadline still fires but an
+          # early cancel cannot reach the run — the worker records which.
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        # matrix.task is "mode:job_id" — the worker claims the row before doing
+        # anything, so two legs can never run the same job twice.
+        run: python -m runner.worker "${{ matrix.task }}"
+
+  # Keeps this repo "active" so GitHub does not auto-disable the schedule after
+  # 60 days without commit activity. Cheap, and it is the one mitigation that
+  # does not require remembering anything.
+  #
+  # It writes a DATE, not a timestamp, on purpose: `git diff --staged --quiet`
+  # then finds nothing to commit on the other ~287 ticks of the day. A timestamp
+  # would commit every 5 minutes — ~288 commits a day for no benefit, since the
+  # inactivity timer only cares that the repo saw activity at all.
+  keepalive:
+    needs: decide
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Touch keep-alive stamp (at most one commit per day)
+        run: |
+          mkdir -p .keepalive
+          date -u +'%Y-%m-%d' > .keepalive/last-active.txt
+          git config user.name "kaggle-mate-runner"
+          git config user.email "actions@users.noreply.github.com"
+          git add .keepalive/last-active.txt
+          git diff --staged --quiet && { echo "already stamped today"; exit 0; }
+          git commit -m "keepalive: scheduled tick"
+          git push

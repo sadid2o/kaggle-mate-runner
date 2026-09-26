@@ -1,0 +1,48 @@
+name: phase0
+
+# One-shot feasibility check. Run this ONCE, read the log, then stop running it.
+#
+# It creates a throwaway private kernel and watches it through three
+# deliberately short runs. Uses only the KAGGLE_TOKEN secret, not Supabase, so
+# it can be run before any of the backend exists.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "run" to confirm (this creates a real private kernel on your account)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  phase0:
+    if: inputs.confirm == 'run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run feasibility checks
+        env:
+          # "username:key" or a pasted kaggle.json blob — both are accepted.
+          KAGGLE_TOKEN: ${{ secrets.KAGGLE_TOKEN }}
+        run: python -m runner.phase0
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: phase0-results
+          path: .phase0/
+          retention-days: 30

@@ -1,0 +1,27 @@
+# ---- secrets: never commit these ----
+kaggle.json
+.env
+.env.*
+*.pem
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# ---- scratch / phase0 output ----
+.phase0/
+/tmp-*/
+out/
+
+# ---- supabase CLI local state ----
+supabase/.temp/
+supabase/.branches/
+
+# ---- editors / os ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

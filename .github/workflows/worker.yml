@@ -1,0 +1,84 @@
+name: worker
+
+# Manual and after-the-fact work — the paths that are not "a schedule came due".
+#
+# NOTE: the app does not trigger this workflow. Without a personal access token
+# it cannot, and a PAT would be a long-lived credential that can write to every
+# repository the account can reach — too much power for "start a notebook".
+# Instead the app writes a row to Supabase and `tick.yml` picks it up within
+# 5 minutes. This file exists for a human to run things by hand, and for the
+# `reap` sweep below.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Task: "start:<job_id>", "cancel:<job_id>" or "reap"'
+        required: true
+        type: string
+        default: reap
+  # Safety net. The primary stop is the watchdog inside the notebook; this
+  # catches the case where a runner died and left a job `running` with nobody
+  # left to notice it ended.
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: km-worker-manual
+  cancel-in-progress: false
+
+jobs:
+  # Manual path only. When this workflow is triggered by cron, the `reap` job
+  # below does the work — having both run would reap the same jobs twice.
+  work:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run task
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          # Publishable, not secret: it is embedded in the notebook so a running
+          # run can hear "Cancel now". Not a secret — which is exactly why it is
+          # safe here. Without it the deadline still fires, but an early cancel
+          # cannot reach the run.
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: python -m runner.worker "${{ inputs.task }}"
+
+  # Hourly sweep: finalise anything left `running`/`watching` whose deadline has
+  # passed — i.e. a run whose own worker died before it could notice the end.
+  reap:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Reap stale jobs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: python -m runner.worker reap

@@ -1,0 +1,30 @@
+# Exact pins — `tests.yml` runs `pip install --dry-run` on this file so an
+# unresolvable pin fails at push time instead of at 3am in a scheduled run.
+#
+# Verified 2026-09-26 against PyPI's JSON API and the Kaggle/kaggle-cli source.
+
+# The official Kaggle CLI. 2.2.4 is the current release (2026-07-23).
+#
+# Do NOT downgrade this to a 1.x pin: `--timeout` on `kernels push` and
+# `kernels logs` only exist in the 2.x line, and both are load-bearing here.
+# The GitHub repo was renamed kaggle-api -> kaggle-cli (changelog 1.8.4) but the
+# PyPI package name is still `kaggle`; there is no `kaggle-api` package on PyPI.
+# Requires Python >= 3.11.
+kaggle==2.2.4
+
+# Official first-party Supabase client, latest as of 2026-06-04.
+supabase==2.31.0
+
+# The IANA timezone database, as a package.
+#
+# NOT optional here. The schedule engine converts between the user's
+# Asia/Dhaka wall-clock times and UTC, and `zoneinfo` reads the system tz
+# database — which Windows does not ship. Without this, ZoneInfo("Asia/Dhaka")
+# raises ZoneInfoNotFoundError on any Windows machine. Linux CI has a system
+# copy at /usr/share/zoneinfo, so this failure is invisible in GitHub Actions
+# and only appears on a developer's PC — which is exactly the kind of
+# "works on CI, broken locally" gap that costs hours to find.
+tzdata==2026.4
+
+# httpx and python-dateutil are deliberately NOT pinned: supabase-py depends on
+# both, and pinning them here would risk fighting whatever it resolves.

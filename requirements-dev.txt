@@ -1,0 +1,4 @@
+# Latest as of 2026-06-19 (verified on PyPI). Pytest 9 removed deprecations it
+# had been warning about through the 8.x cycle — nothing in this repo's tests
+# used them, but that is the reason the major bump matters.
+pytest==9.1.1
