@@ -357,6 +357,85 @@ throwing, and `optionalDate` checks date *shape* but not calendar validity, so
 Not yet covered: `_shared/kaggle.ts` (401 lines) and the six handlers themselves,
 which need a mocked Supabase client.
 
+### 8. The failure-code contract, and the bug that was hiding in it
+
+The runner's failure codes are read by the Flutter app. Nothing links the two:
+the codes are strings written in Python, TypeScript and SQL, and read in Dart.
+A string is not a type in either language, so no compiler, analyzer or linter
+can notice when the two sides disagree — and they had disagreed **completely**.
+
+Read out of the sources side by side, the overlap was **zero**:
+
+    app explained            runner writes
+    -----------------------  -----------------------------
+    kaggle_auth              AUTH_FAILED
+    kaggle_push_failed       PUSH_FAILED, QUOTA_LIMIT
+    timeout                  KAGGLE_RUN_ERROR, WORKER_CRASH
+    notebook_never_started   MISSED_WINDOW
+    runner_error             DEADLINE_STOP_UNCONFIRMED
+                             CANCELLED_BY_USER
+                             OUTPUT_FETCH_FAILED  (job_events only)
+                             CANCEL_UNCONFIRMED   (job_events only)
+
+Not one string appears on both sides. So **every** failure a user could hit fell
+through to the generic "The log page will show the full reason", while the five
+strings the app did translate were dead — nothing has ever written any of them.
+The same was true of `stop_reason`: the app labelled `cancelled` and `watchdog`,
+neither of which the runner writes, and passed `cancelled_by_user` and
+`notebook_finished` through raw.
+
+Three separate defects came out of reading the code rather than guessing:
+
+1. **Every real failure was unexplained** (above).
+2. **Cancelling a run looked like a failure.** The run screen showed its card
+   whenever `error_code` was non-null — and cancelling a *pending* run writes
+   `CANCELLED_BY_USER`. A user who deliberately stopped a run was told it failed.
+   `OUTPUT_FETCH_FAILED` had the same problem in reverse: the run succeeded, and
+   only its saved log is missing, so a red failure card is wrong.
+3. **The `alerts` table has no writer.** Grepping `runner/` for it returns
+   nothing, so the Alerts page, its unread badge and its notifications can only
+   ever be empty. Still open.
+
+The fix is a single vocabulary, `lib/core/error/runner_failure.dart` in the app,
+with one entry per code giving a title, a severity and a plain explanation — and
+`tools/scan_error_codes.py` here, which reads the runner's Python (via `ast`),
+TypeScript and SQL every run and derives what it can write. It **discovers**
+which helpers write `jobs` and which write `job_events` from their bodies, so
+the run-level / event-only split is checked rather than trusted; it follows
+`error_code=code_tag` back to its assignment, because `QUOTA_LIMIT` and
+`PUSH_FAILED` never appear at the write site; and it resolves
+`stop_reason=job.get("stop_reason_pref")` against the migration's CHECK
+constraint, so the migration is part of the contract instead of a comment about
+it. Anything it cannot read is reported and fails the test — an unreadable write
+is exactly the shape of the bug it exists to catch.
+
+`tests/test_error_codes.py` — 24 tests, **all passing**, comparing the two
+vocabularies in *both* directions: a code the runner writes and the app cannot
+explain, and a code the app explains that nothing writes. The second half is the
+one that hid the first, because the fallback looked like it was working.
+
+Control-tested by planting seven faults one at a time — a new unexplained code,
+a dead code in the app, a code moved to the wrong half, a stale snapshot, an
+unlabelled stop reason, an unreadable write, and a code deleted from the app's
+list. **All seven were caught**, and the suite returned to green after each
+restore. (The first harness was itself broken: `Path.write_text` rewrites LF as
+CRLF on Windows, so its "revert" changed the file and a hash assertion failed for
+a reason unrelated to the mutation. That in turn exposed a real defect — one code
+path hashed normalised text while another hashed raw bytes, so they disagreed by
+construction on any CRLF checkout. Both now use `dart_file_hash`, which
+normalises line endings before hashing, and there is a test for exactly that.)
+
+The app's vocabulary is committed here as `contract/runner_failure.json`, since
+this job cannot see the Dart file. The full comparison runs wherever both
+checkouts are present; in this job the codes are checked against the snapshot
+plus a frozen list. Regenerate with
+`python tools/scan_error_codes.py --write-contract`.
+
+Runner suite: **83 → 107 passed**. App suite: **75 → 97 passed**, with
+`test/core/runner_failure_test.dart` covering what the scanner cannot see — that
+a user's own cancel is not described as a failure, and that an unknown code is
+shown rather than swallowed.
+
 ## Still unverified — do not treat as working
 
 - **Nothing was deployed or executed.** No function has ever served a request.
@@ -378,3 +457,9 @@ which need a mocked Supabase client.
   `Job.fromJson` accepts are sent, but nothing has parsed them for real.
 - The `run_now` window constant (`MANUAL_RUN_MINUTES = 60`) is a judgement call,
   not a verified requirement. See the decision note above.
+- **The failure-code contract is checked, but nothing has exercised it against a
+  live database.** The guard proves the two vocabularies agree with the sources
+  as written; it cannot prove that Postgres accepts those writes, because no
+  migration has been applied. See the note about migrations below.
+- **The `alerts` table still has no writer** (§8, defect 3). The Alerts page
+  renders correctly and can only ever be empty until something inserts into it.

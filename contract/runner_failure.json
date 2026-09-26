@@ -1,0 +1,49 @@
+{
+  "source": "lib/core/error/runner_failure.dart",
+  "sha256": "30f8b28343d8c57e72b245dde0fd313a4593e31a40c54141e7624227336b9484",
+  "codes": [
+    "AUTH_FAILED",
+    "CANCELLED_BY_USER",
+    "CANCEL_UNCONFIRMED",
+    "DEADLINE_STOP_UNCONFIRMED",
+    "KAGGLE_RUN_ERROR",
+    "MISSED_WINDOW",
+    "OUTPUT_FETCH_FAILED",
+    "PUSH_FAILED",
+    "QUOTA_LIMIT",
+    "WORKER_CRASH"
+  ],
+  "run_level_codes": [
+    "AUTH_FAILED",
+    "CANCELLED_BY_USER",
+    "DEADLINE_STOP_UNCONFIRMED",
+    "KAGGLE_RUN_ERROR",
+    "MISSED_WINDOW",
+    "PUSH_FAILED",
+    "QUOTA_LIMIT",
+    "WORKER_CRASH"
+  ],
+  "event_only_codes": [
+    "CANCEL_UNCONFIRMED",
+    "OUTPUT_FETCH_FAILED"
+  ],
+  "stop_reasons": [
+    "cancelled_by_user",
+    "clock_time",
+    "duration",
+    "manual",
+    "notebook_finished"
+  ],
+  "severities": {
+    "AUTH_FAILED": "failure",
+    "CANCELLED_BY_USER": "cancelled",
+    "CANCEL_UNCONFIRMED": "notice",
+    "DEADLINE_STOP_UNCONFIRMED": "failure",
+    "KAGGLE_RUN_ERROR": "failure",
+    "MISSED_WINDOW": "failure",
+    "OUTPUT_FETCH_FAILED": "notice",
+    "PUSH_FAILED": "failure",
+    "QUOTA_LIMIT": "failure",
+    "WORKER_CRASH": "failure"
+  }
+}

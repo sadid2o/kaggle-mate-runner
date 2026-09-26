@@ -43,6 +43,20 @@ jobs:
           pip list --format=columns
 
       - name: Run tests
+        # `tests/test_error_codes.py` lives here and needs no extra step: the
+        # runner's failure codes are also read by the Flutter app, and the two
+        # vocabularies had drifted apart completely — the app translated five
+        # codes, the runner wrote ten, and the overlap was zero, so every real
+        # failure reached the screen as "The log page will show the full reason".
+        # Nothing could catch that, because a code string is not a type in either
+        # language. The test scans the runner's own Python, TypeScript and SQL for
+        # every code it can write and compares that against the app's vocabulary,
+        # committed here as `contract/runner_failure.json`.
+        #
+        # This job cannot see the Dart file, so it checks the codes against that
+        # snapshot plus a frozen list; the full comparison runs wherever both
+        # checkouts are present. Either way the scanner runs here — so a new code
+        # added to the runner without being explained fails THIS job.
         run: python -m pytest tests/ -v
 
   verify-deps:
