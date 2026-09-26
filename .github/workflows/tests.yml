@@ -72,6 +72,13 @@ jobs:
         # syntax, unknown inputs, invalid cron, undeclared job outputs. Without
         # it these only fail at run time — which for `tick.yml` means inside a
         # scheduled job nobody is watching.
+        #
+        # Pinned to a version so the linter cannot change under the repo; bump
+        # it deliberately. Its one false positive, on `queue: max`, is
+        # suppressed by message in .github/actionlint.yaml and is documented
+        # there with the upstream issue numbers.
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
         run: |
-          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) "$ACTIONLINT_VERSION"
           ./actionlint -color

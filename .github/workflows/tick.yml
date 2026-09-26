@@ -28,6 +28,10 @@ permissions:
 # collide and one is cancelled — losing a decision entirely. `queue: max` keeps
 # up to 100 pending runs FIFO instead, and REQUIRES cancel-in-progress: false
 # (set below) or GitHub rejects the workflow.
+#
+# `queue` is documented GitHub syntax but actionlint does not know it yet
+# (rhysd/actionlint#657). The false positive is suppressed precisely, by
+# message, in .github/actionlint.yaml — not by disabling the linter.
 concurrency:
   group: km-tick
   cancel-in-progress: false

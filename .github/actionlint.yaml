@@ -1,0 +1,27 @@
+# actionlint configuration.
+#
+# One narrow, documented exception. Everything else actionlint reports is a
+# real error and must fail the `verify-workflows` job.
+
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # `queue` IS valid GitHub Actions syntax:
+      #
+      #   concurrency:
+      #     group: km-tick
+      #     cancel-in-progress: false
+      #     queue: max
+      #
+      # GitHub documents it as "The optional queue property controls pending
+      # runs within a concurrency group ... max allows up to 100 pending runs",
+      # and `queue: max` cannot be combined with `cancel-in-progress: true`.
+      #
+      # actionlint does not know the key yet -- it is still open upstream
+      # (rhysd/actionlint#657 and #680), and v1.7.12 is the newest release, so
+      # the bundled linter in tests.yml reports a false positive. `tick.yml`
+      # needs `queue: max` for a real reason: without it a late tick and its
+      # successor collide, one is cancelled, and a scheduling decision is lost.
+      #
+      # Remove this ignore once actionlint learns the key.
+      - 'unexpected key "queue" for "concurrency" section'
