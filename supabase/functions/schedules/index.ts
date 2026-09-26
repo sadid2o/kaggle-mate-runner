@@ -152,7 +152,14 @@ async function updateSchedule(db: ReturnType<typeof admin>, params: Params): Pro
   // full row mandatory would turn that one-toggle call into a read-modify-write
   // the app has no reason to do, so only the fields actually present are
   // applied and the rest of the row is left alone.
-  const row = await buildRow(db, params, existing.data.notebook_id, null, true);
+  //
+  // The `true` is the fourth argument. A fifth `null` used to sit before it,
+  // left over from an older signature: every parameter after the shift landed
+  // one slot early, so `partial` received `null` -- which is falsy, so partial
+  // mode silently turned itself off and the toggle demanded all eight schedule
+  // fields. `deno check` rejected the arity; the behaviour it was hiding is why
+  // this is worth a comment rather than a quiet deletion.
+  const row = await buildRow(db, params, existing.data.notebook_id, true);
   if (Object.keys(row).length === 0) {
     throw badRequest("Nothing was provided to change.");
   }

@@ -1,10 +1,11 @@
 name: tests
 
-# The only place the Python in this repo is actually executed.
+# The only place the Python and the Deno TypeScript in this repo are actually
+# executed and type-checked.
 #
-# The engine and watchdog tests are pure — no network, no credentials — so this
-# workflow needs no secrets at all. That matters: the test suite can run on a
-# public repo's pull requests without exposing anything.
+# Both suites are pure — no network, no credentials — so this workflow needs no
+# secrets at all. That matters: everything here can run on a public repo's pull
+# requests without exposing anything, and without the backend existing yet.
 
 on:
   push:
@@ -82,3 +83,46 @@ jobs:
         run: |
           bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) "$ACTIONLINT_VERSION"
           ./actionlint -color
+
+  edge-functions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: denoland/setup-deno@v2
+        with:
+          # Pinned so the compiler cannot change under the repo; bump once a
+          # change has been checked locally. `deno check` behaviour is tied to
+          # this version, and an unpinned one would make CI fail on some future
+          # morning with no commit behind it.
+          deno-version: '2.9.7'
+
+      - name: Type-check the Edge Functions
+        # This is the gate that matters most for these files. It was run for the
+        # first time on 2026-09-26 and immediately found six real errors across
+        # two functions: five in `jobs`, from a `+`-split string literal that
+        # was silently widening the inferred row type, and one in `schedules`
+        # that was hiding a schedule toggle doing nothing at all. Before this
+        # job existed, nothing in the repo had ever type-checked them.
+        #
+        # Measured, not assumed, in both directions: it DOES catch a wrong
+        # import path (TS2307), but it does NOT catch a wrong column name — with
+        # no generated database types a string is just a string, so planting
+        # `definitely_not_a_column` in JOB_COLUMNS still exits 0. The tests
+        # below cover that ground instead.
+        working-directory: supabase/functions
+        run: deno check --frozen --config deno.json accounts/index.ts notebooks/index.ts schedules/index.ts jobs/index.ts alerts/index.ts status/index.ts
+
+      - name: Run the Edge Function tests
+        # Pure unit tests over `_shared/request.ts` and `_shared/http.ts` — the
+        # modules every one of the six functions passes through. No Supabase, no
+        # network, no credentials.
+        working-directory: supabase/functions
+        run: deno test --frozen --config deno.json tests/
+
+      - name: Show resolved versions
+        # Same reasoning as the Python job above: when a future failure is a
+        # version problem, this is the line that says so.
+        working-directory: supabase/functions
+        run: deno --version

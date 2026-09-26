@@ -43,10 +43,17 @@ import {
 /// Every column of `jobs`, listed rather than `*` so a column added later does
 /// not silently enter a response the app has not been taught to read.
 /// `Job.fromJson` ignores the ones it does not use.
-const JOB_COLUMNS =
-  "id,schedule_id,notebook_id,account_id,kaggle_version_id,state,planned_start_at," +
-  "planned_stop_at,started_at,finished_at,timeout_seconds,stop_reason_pref," +
-  "stop_reason,error_code,last_status,log_path,cancel_requested,created_at";
+/// Every column of `jobs`, and it **must stay on one line**.
+///
+/// Splitting this literal across `+`-joined lines widens its type from the
+/// literal to `string`, and `postgrest-js` infers its result type by parsing
+/// that literal at compile time. A widened `string` is therefore not a
+/// cosmetic difference: the client falls back to its error type for the whole
+/// query, every row becomes `GenericStringError`, and `.select(...)` on any
+/// other column stops compiling. `deno check` caught exactly that here; the
+/// other functions were fine only because their literals happen to be short
+/// enough to fit on one line.
+const JOB_COLUMNS = "id,schedule_id,notebook_id,account_id,kaggle_version_id,state,planned_start_at,planned_stop_at,started_at,finished_at,timeout_seconds,stop_reason_pref,stop_reason,error_code,last_status,log_path,cancel_requested,created_at";
 
 /// The `job_state` enum, character for character as `migrations/0001_init.sql`
 /// declares it. This is not decoration. The app sends a state back in a filter

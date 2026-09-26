@@ -153,9 +153,11 @@ caller ever writes one. So:
 ## Verification actually run
 
 Everything below was actually executed on this machine on 2026-09-26, with the
-real output read back. Deno is **not installed** and the Supabase CLI is **not
-installed** (confirmed with `which`), so nothing was executed or type-checked as
-Deno would.
+real output read back. At the time §1–§5 were written, Deno was **not installed**
+and the Supabase CLI was **not installed** (confirmed with `which`), so nothing
+had been executed or type-checked as Deno would. Deno was installed later the
+same day and `deno check` was run for the first time — see §6, which supersedes
+the type-checking caveats in §2 and in "Still unverified" below.
 
 ### 1. IMPORTANT — the brief's `node --check` gate does not work here
 
@@ -219,7 +221,9 @@ brackets, no bad tokens, no malformed declarations. It does **not** type-check.
 The three "MISSED" cases above are exactly the classes of error it cannot see: a
 wrong column name, a wrong import path and a wrong argument count all pass it.
 It is a strictly better syntax gate than the brief's, and still strictly weaker
-than `deno check`, which has never been run.
+than `deno check` — which had never been run at the time this was written, and
+has since been (see §6), where it immediately found six errors this gate had
+passed.
 
 ### 3. Column names, verified mechanically against the schema
 
@@ -228,10 +232,11 @@ string emitted by every function against it. Result: **no unknown column name in
 any file.** Specifically:
 
 - `JOB_COLUMNS` resolves to all 18 columns of `jobs`, and the set is identical
-  to the schema's 18 — nothing missing, nothing invented. (The literal is split
+  to the schema's 18 — nothing missing, nothing invented. (The literal was split
   across three `+`-joined lines, so this needed the concatenation evaluated, not
   just grepped — the first pass checked each fragment separately and was
-  misleading.)
+  misleading. That split turned out to be a real bug, not just a reading
+  hazard: see §6. It is now one line.)
 - `ALERT_COLUMNS` is all 7 columns of `alerts`.
 - Every `.eq/.order/.select/.is/.gte/.in` column reference across all six
   functions is a real column.
@@ -272,15 +277,94 @@ nothing. `mark_read` reads `id` with `intParam`, not `uuidParam`, because
   `itemResponse`/`itemsResponse`/`okResponse`; **`status` is the only file with a
   bare `Response.json`** and no `itemResponse`, which is the documented
   exception the app's `runnerStatus` requires.
-- Every user-facing error string in all six functions contains Bengali; checked
-  programmatically, 0 messages without it (89 messages across the six files).
+- Every user-facing error string in all six functions is **English**; checked
+  programmatically with a Python codepoint scan (not `grep -P`, which this Git
+  Bash breaks on for the Bengali ranges), 0 Bengali characters in the six
+  functions or in `_shared/`.
+
+  This line previously claimed the opposite — that all 89 messages contained
+  Bengali and 0 did not. That was wrong when it was written and is wrong now.
+  The measurement was redone on 2026-09-26 across the runner repo, `lib/` and
+  `test/` together: 0 Bengali characters in any code file. The only place
+  Bengali survives is `kaggle_mate/docs/*` (11,582 characters across 6 files),
+  which the app never loads at runtime. The requirement is English everywhere,
+  so docs are the remaining cleanup, not the code.
+
+### 6. Finally type-checked — `deno check`, run for the first time
+
+Deno 2.9.7 was installed later on 2026-09-26 (`x86_64-pc-windows-msvc`, v8
+15.0.245.2, TypeScript 6.0.3) and `deno check` was run over the tree for the
+first time in this project's life. It found **six real errors in two files** that
+every earlier gate had passed — including the `stripTypeScriptTypes` parser in §2
+and the whole-tree column audit in §3.
+
+Run against the broken forms on purpose (both mutations confirmed applied
+byte-for-byte first, and the venv Python had to be used by absolute path because
+`python` is not on PATH here):
+
+    jobs/index.ts       TS2352 x4  `as Record<string, unknown>` cast of GenericStringError
+                        TS2339 x1  found.data.state
+    schedules/index.ts  TS2554 x1  Expected 3-4 arguments, but got 5
+                                    -> Found 6 errors.
+
+**The cause of the five `jobs` errors was `JOB_COLUMNS`.** Splitting that string
+literal across `+`-joined lines widens its type from the literal to plain
+`string`, and `postgrest-js` infers its result type by *parsing that literal at
+compile time*. So it is not cosmetic: the client falls back to its error type,
+every row becomes `GenericStringError`, and `.select(...)` on any other column
+stops compiling. Fixed by putting the literal on one line, with a comment saying
+it must stay there. The other functions were only unaffected because their
+literals happen to be short enough to fit on one line — which is luck, not
+design, and is worth knowing before anyone reformats one.
+
+**The one `schedules` error was a real behavioural bug, not a typing nit.**
+`buildRow` takes 4 parameters and line 155 called it with 5, a leftover `null`
+from an older signature. That shifted every later argument one slot early, so
+`partial` received the `null` — falsy — and partial mode silently turned itself
+off. `setScheduleActive` sends nothing but `is_active`, so the schedule
+enable/disable toggle in the app was demanding all eight schedule fields and
+failing. The type checker caught the arity; the behaviour it was hiding is why
+this is documented in the code rather than quietly deleted.
+
+After both fixes, all six entry points: **EXIT=0**.
+
+What `deno check` does and does not catch, measured by planting each fault in a
+copy and running it (this corrects the claim in §2 and in my earlier notes,
+which said a wrong import path is missed — it is not):
+
+    wrong import path   -> CAUGHT   (TS2307)
+    wrong column name   -> MISSED   (a string is just a string)
+
+The missed case is the gap the tests below exist to fill. `deno.lock` is now
+committed, so CI resolves exactly the dependency versions this was checked
+against, and the workflow runs `--frozen` so a silent dependency change fails
+loudly instead of changing what "green" means.
+
+### 7. Unit tests over the shared modules
+
+`tests/shared_test.ts` — 42 tests over `_shared/request.ts` and `_shared/http.ts`,
+chosen first because they are pure (no network, no Supabase, no `Deno.env`) and
+because all six functions' inputs and outputs pass through them. `deno test`:
+**42 passed, 0 failed.**
+
+Control-tested the suite the same way: breaking `intParam`'s clamping, breaking
+`daysParam`'s dedupe/sort, and inverting the body-over-query precedence rule were
+each caught, and 42/42 passed again after restoration. Two behaviours are pinned
+deliberately rather than "fixed": `intParam` CLAMPS out-of-range rather than
+throwing, and `optionalDate` checks date *shape* but not calendar validity, so
+`2026-99-99` passes through to Postgres.
+
+Not yet covered: `_shared/kaggle.ts` (401 lines) and the six handlers themselves,
+which need a mocked Supabase client.
 
 ## Still unverified — do not treat as working
 
 - **Nothing was deployed or executed.** No function has ever served a request.
-- **Type checking is unverified.** `deno check` has never run on this tree, and
-  Deno is not installed. The gate in §2 is a parser, not a type checker — see the
-  three "MISSED" controls.
+- **Type checking is verified going forward (see §6), but nothing downstream of
+  it is.** All six entry points are clean under `deno check` 2.9.7 and 42 unit
+  tests pass. That says the code is internally consistent and that the shared
+  modules behave as tested; it says nothing about whether Postgres accepts the
+  queries, because a wrong column name is invisible to the checker (§6).
 - No PostgREST call was made, so no query is known to be accepted by the server.
   In particular, `head: true` counts and `.maybeSingle()` on an ordered-limit-1
   query are used per the documented behaviour of the client; they are unexercised.
